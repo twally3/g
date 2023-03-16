@@ -363,15 +363,17 @@ func main() {
 	pkgDir := filepath.Join(groot, pkg)
 	versionRoot := filepath.Join(groot, goVersion.Semver)
 
-	// TODO: Only download if the file doesn't exist
-	if err := DownloadFile(pkgDir, url); err != nil {
-		panic(err)
-	}
+	if _, err := os.Stat(versionRoot); os.IsNotExist(err) {
+		fmt.Println("Version is not local, downloading...")
+		if err := DownloadFile(pkgDir, url); err != nil {
+			panic(err)
+		}
 
-	if err := untargz(pkgDir, versionRoot); err != nil {
-		panic(err)
+		if err := untargz(pkgDir, versionRoot); err != nil {
+			panic(err)
+		}
+		// TODO: Delete tar file
 	}
-	// TODO: Delete tar file
 
 	lnsrc := filepath.Join(versionRoot, "go")
 	lndest := filepath.Join(groot, "go")
