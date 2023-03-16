@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -202,6 +204,102 @@ func writePath(profilePath string, binPath string) error {
 	return nil
 }
 
+type GoVersion struct {
+	Version  string `json:"version"`
+	Stable   bool   `json:"stable"`
+	archived bool
+	Semver   string
+}
+
+func makeGoVersionsRequest(includeArchived bool) ([]GoVersion, error) {
+	url := "https://golang.org/dl/?mode=json"
+	if includeArchived {
+		url = url + "&include=all"
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var versions []GoVersion
+	err = json.NewDecoder(resp.Body).Decode(&versions)
+	if err != nil {
+		return nil, err
+	}
+
+	return versions, nil
+}
+
+func getGoVersions() ([]GoVersion, error) {
+	currentVersions, err := makeGoVersionsRequest(false)
+	if err != nil {
+		return nil, err
+	}
+
+	versionSet := map[string]bool{}
+	for _, v := range currentVersions {
+		versionSet[v.Version] = true
+	}
+
+	allVersions, err := makeGoVersionsRequest(true)
+	if err != nil {
+		return nil, err
+	}
+
+	finalVersions := []GoVersion{}
+
+	for _, v := range allVersions {
+		if _, ok := versionSet[v.Version]; !ok {
+			v.archived = true
+		}
+
+		v.Semver = calculateSemver(v.Version)
+
+		finalVersions = append(finalVersions, v)
+	}
+
+	return finalVersions, nil
+}
+
+func calculateSemver(versionString string) string {
+	re := regexp.MustCompile(`^go(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:(\w+)(\d+))?$`)
+
+	match := re.FindStringSubmatch(versionString)
+
+	if match == nil {
+		panic("Failed to match go version")
+	}
+
+	major := match[1]
+	if major == "" {
+		major = "0"
+	}
+	minor := match[2]
+	if minor == "" {
+		minor = "0"
+	}
+	patch := match[3]
+	if patch == "" {
+		patch = "0"
+	}
+
+	distTag := match[4]
+	build := match[5]
+
+	semver := fmt.Sprintf("%s.%s.%s", major, minor, patch)
+	preRelease := distTag
+	if build != "" {
+		preRelease = fmt.Sprintf("%s.%s", preRelease, build)
+	}
+
+	if preRelease != "" {
+		semver = fmt.Sprintf("%s-%s", semver, preRelease)
+	}
+
+	return semver
+}
+
 func main() {
 	currentUser, err := user.Current()
 	if err != nil {
@@ -227,6 +325,31 @@ func main() {
 
 	version := os.Args[1]
 
+	fmt.Printf("Searching for a version that matches %s\n", version)
+	versions, err := getGoVersions()
+	if err != nil {
+		panic(err)
+	}
+
+	idx := -1
+	for i, v := range versions {
+		if (version == "stable" || version == "lts") && v.Stable {
+			idx = i
+			break
+		}
+		if strings.HasPrefix(v.Semver, version) {
+			idx = i
+			break
+		}
+	}
+
+	if idx == -1 {
+		panic("Could not satisfy version")
+	}
+
+	goVersion := versions[idx]
+	fmt.Printf("Found matching go version %s\n", goVersion.Semver)
+
 	if _, err := os.Stat(groot); os.IsNotExist(err) {
 		err := os.Mkdir(groot, 0755)
 		if err != nil {
@@ -234,12 +357,13 @@ func main() {
 		}
 	}
 
-	pkg := fmt.Sprintf("go%s.%s-%s%s", version, system.OS, system.Architecture, system.Extension)
+	pkg := fmt.Sprintf("%s.%s-%s%s", goVersion.Version, system.OS, system.Architecture, system.Extension)
 	dlroot := "https://go.dev/dl/"
 	url := fmt.Sprintf("%s%s", dlroot, pkg)
 	pkgDir := filepath.Join(groot, pkg)
-	versionRoot := filepath.Join(groot, version)
+	versionRoot := filepath.Join(groot, goVersion.Semver)
 
+	// TODO: Only download if the file doesn't exist
 	if err := DownloadFile(pkgDir, url); err != nil {
 		panic(err)
 	}
@@ -247,6 +371,7 @@ func main() {
 	if err := untargz(pkgDir, versionRoot); err != nil {
 		panic(err)
 	}
+	// TODO: Delete tar file
 
 	lnsrc := filepath.Join(versionRoot, "go")
 	lndest := filepath.Join(groot, "go")
