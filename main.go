@@ -99,6 +99,26 @@ func getSystem() (*System, error) {
 	}
 }
 
+type ProgressBar struct {
+	current int64
+	total   int64
+}
+
+// https://darkcoding.net/software/pretty-command-line-console-output-on-unix-in-python-and-go-lang/
+// TODO: Change this to work more like the above
+func (p *ProgressBar) Write(b []byte) (int, error) {
+	n := len(b)
+	p.current += int64(n)
+	if p.total == 0 {
+		// TODO: Find out what happens if you return error
+		fmt.Println("Unknown progress...")
+		return n, nil
+	}
+	percent := float32(p.current) / float32(p.total) * 100
+	fmt.Printf("\rDownloading... %.2f%%", percent)
+	return n, nil
+}
+
 func DownloadFile(filepath string, url string) error {
 	// Create the file
 	out, err := os.Create(filepath)
@@ -114,11 +134,17 @@ func DownloadFile(filepath string, url string) error {
 	}
 	defer resp.Body.Close()
 
+	progressBar := &ProgressBar{}
+	progressBar.total = resp.ContentLength
+	reader := io.TeeReader(resp.Body, progressBar)
+
 	// Write the response to the file
-	_, err = io.Copy(out, resp.Body)
+	_, err = io.Copy(out, reader)
 	if err != nil {
 		return err
 	}
+
+	fmt.Println("")
 
 	return nil
 }
