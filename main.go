@@ -326,6 +326,22 @@ func calculateSemver(versionString string) string {
 	return semver
 }
 
+func deleteFiles(glob string) error {
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		err := os.Remove(file)
+		if err != nil {
+			fmt.Printf("Failed to delete %s\n", file)
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	currentUser, err := user.Current()
 	if err != nil {
@@ -398,7 +414,10 @@ func main() {
 		if err := untargz(pkgDir, versionRoot); err != nil {
 			panic(err)
 		}
-		// TODO: Delete tar file
+
+		if err := deleteFiles(filepath.Join(groot, "*.tar.gz")); err != nil {
+			panic(err)
+		}
 	}
 
 	lnsrc := filepath.Join(versionRoot, "go")
