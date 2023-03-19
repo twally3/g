@@ -40,18 +40,10 @@ const (
 	Arm Architecture = "arm64"
 )
 
-type Shell string
-
-const (
-	Zsh  Shell = ".zshrc"
-	Bash Shell = ".bash_profile"
-)
-
 type System struct {
 	Architecture Architecture
 	Extension    Extension
 	OS           OperatingSystem
-	Shell        Shell
 }
 
 func getArch() (Architecture, error) {
@@ -65,16 +57,20 @@ func getArch() (Architecture, error) {
 	}
 }
 
-func getShell() (Shell, error) {
-	shell := strings.Split(os.Getenv("SHELL"), "/")[len(strings.Split(os.Getenv("SHELL"), "/"))-1]
-	switch shell {
-	case "bash":
-		return Bash, nil
-	case "zsh":
-		return Zsh, nil
-	default:
-		return "", fmt.Errorf("unknown shell %s", shell)
+func getShellFilePath(homePath string) (string, error) {
+	zshrcPath := filepath.Join(homePath, ".zshrc")
+	bashrcPath := filepath.Join(homePath, ".bashrc")
+	bashProfilePath := filepath.Join(homePath, ".bash_profile")
+
+	if _, err := os.Stat(zshrcPath); err == nil {
+		return zshrcPath, nil
+	} else if _, err := os.Stat(bashrcPath); err == nil {
+		return bashrcPath, nil
+	} else if _, err := os.Stat(bashProfilePath); err == nil {
+		return bashProfilePath, nil
 	}
+
+	return "", fmt.Errorf("unknown shell file path")
 }
 func getSystem() (*System, error) {
 	arch, err := getArch()
@@ -82,16 +78,11 @@ func getSystem() (*System, error) {
 		return nil, err
 	}
 
-	shell, err := getShell()
-	if err != nil {
-		return nil, err
-	}
-
 	switch runtime.GOOS {
 	case "darwin":
-		return &System{arch, Tar, Darwin, shell}, nil
+		return &System{arch, Tar, Darwin}, nil
 	case "linux":
-		return &System{arch, Tar, Linux, shell}, nil
+		return &System{arch, Tar, Linux}, nil
 	// case "windows":
 	// 	return &System{Amd, Zip, Windows}, nil
 	default:
@@ -202,7 +193,7 @@ func untargz(inpath string, outpath string) error {
 }
 
 func writePath(profilePath string, binPath string) error {
-	exportCmd := fmt.Sprintf("export PATH=%s:$PATH", binPath)
+	exportCmd := fmt.Sprintf("\nexport PATH=%s:$PATH", binPath)
 
 	file, err := os.OpenFile(profilePath, os.O_RDWR, 0644)
 	if err != nil {
@@ -433,7 +424,11 @@ func main() {
 		panic(err)
 	}
 
-	profilePath := filepath.Join(currentUser.HomeDir, string(system.Shell))
+	profilePath, err := getShellFilePath(currentUser.HomeDir)
+	if err != nil {
+		panic(err)
+	}
+
 	binPath := filepath.Join(lndest, "bin")
 
 	if err := writePath(profilePath, binPath); err != nil {
